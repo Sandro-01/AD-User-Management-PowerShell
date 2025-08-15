@@ -1,0 +1,5 @@
+Nome;Cognome;Username;Email;Dominio;Reparto;Ruolo;OU;Gruppi
+Mario;Rossi;m.rossi;mario.rossi@company.com;company.local;IT;Tecnico IT;OU=IT,DC=company,DC=local;Domain Users,IT_Staff
+Giulia;Verdi;g.verdi;giulia.verdi@company.com;company.local;HR;HR Manager;OU=HR,DC=company,DC=local;Domain Users,HR_Team
+Francesco;Bianchi;f.bianchi;francesco.bianchi@company.com;company.local;Vendite;Account Manager;OU=Sales,DC=company,DC=local;Domain Users,Sales_Team
+Anna;Neri;a.neri;anna.neri@company.com;company.local;Amministrazione;Contabile;OU=Admin,DC=company,DC=local;Domain Users,Finance_Team
