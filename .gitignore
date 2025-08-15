@@ -1,0 +1,17 @@
+# PowerShell
+*.ps1xml
+*.psd1
+*.psm1.bak
+
+# Logs
+*.log
+logs/
+
+# Sensitive data
+*.csv
+config/
+secrets/
+
+# Windows
+Thumbs.db
+Desktop.ini
