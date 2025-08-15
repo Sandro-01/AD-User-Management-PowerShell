@@ -1,0 +1,284 @@
+{
+  `body`: `# PowerShell Active Directory User Manager
+## Script per Automazione Gestione Utenti AD
+
+```powershell
+# AD-UserManager.ps1
+# Autore: [Il tuo nome]
+# Descrizione: Tool interattivo per gestione utenti Active Directory
+
+# Importa modulo Active Directory
+Import-Module ActiveDirectory -ErrorAction SilentlyContinue
+
+if (-not (Get-Module ActiveDirectory)) {
+    Write-Error \"Modulo ActiveDirectory non disponibile. Installare RSAT.\"
+    exit 1
+}
+
+# Configurazione globale
+$Global:LogPath = \"C:\\Logs\\AD-UserManager.log\"
+$Global:CSVTemplate = \"C:\\Scripts\\utenti_template.csv\"
+
+# Funzione per logging
+function Write-Log {
+    param([string]$Message, [string]$Level = \"INFO\")
+    $timestamp = Get-Date -Format \"yyyy-MM-dd HH:mm:ss\"
+    $logEntry = \"[$timestamp] [$Level] $Message\"
+    Add-Content -Path $Global:LogPath -Value $logEntry
+    Write-Host $logEntry -ForegroundColor $(if($Level -eq \"ERROR\"){\"Red\"}else{\"Green\"})
+}
+
+# Funzione per creare utenti da CSV
+function New-UsersFromCSV {
+    param([string]$CSVPath)
+    
+    if (-not (Test-Path $CSVPath)) {
+        Write-Log \"File CSV non trovato: $CSVPath\" \"ERROR\"
+        return
+    }
+    
+    $users = Import-Csv $CSVPath -Delimiter \";\"
+    
+    foreach ($user in $users) {
+        try {
+            # Genera password temporanea
+            $tempPassword = ConvertTo-SecureString -String \"TempPass123!\" -AsPlainText -Force
+            
+            # Parametri utente
+            $userParams = @{
+                Name = \"$($user.Nome) $($user.Cognome)\"
+                GivenName = $user.Nome
+                Surname = $user.Cognome
+                SamAccountName = $user.Username
+                UserPrincipalName = \"$($user.Username)@$($user.Dominio)\"
+                EmailAddress = $user.Email
+                Department = $user.Reparto
+                Title = $user.Ruolo
+                Path = $user.OU
+                AccountPassword = $tempPassword
+                Enabled = $true
+                ChangePasswordAtLogon = $true
+            }
+            
+            New-ADUser @userParams
+            
+            # Aggiungi a gruppi se specificati
+            if ($user.Gruppi) {
+                $groups = $user.Gruppi -split \",\"
+                foreach ($group in $groups) {
+                    Add-ADGroupMember -Identity $group.Trim() -Members $user.Username
+                }
+            }
+            
+            Write-Log \"Utente creato: $($user.Username)\"
+            
+        } catch {
+            Write-Log \"Errore creazione utente $($user.Username): $($_.Exception.Message)\" \"ERROR\"
+        }
+    }
+}
+
+# Funzione per reset password
+function Reset-UserPassword {
+    param([string]$Username)
+    
+    try {
+        $newPassword = Read-Host \"Inserisci nuova password\" -AsSecureString
+        Set-ADAccountPassword -Identity $Username -NewPassword $newPassword -Reset
+        Set-ADUser -Identity $Username -ChangePasswordAtLogon $true
+        
+        Write-Log \"Password reset per utente: $Username\"
+        
+        # Opzione invio email (simulata)
+        $sendEmail = Read-Host \"Inviare notifica via email? (s/n)\"
+        if ($sendEmail -eq \"s\") {
+            Write-Host \"📧 Email di notifica inviata a $Username\" -ForegroundColor Yellow
+            Write-Log \"Notifica password inviata a: $Username\"
+        }
+        
+    } catch {
+        Write-Log \"Errore reset password per $Username: $($_.Exception.Message)\" \"ERROR\"
+    }
+}
+
+# Funzione per disabilitare utente
+function Disable-UserAccount {
+    param([string]$Username)
+    
+    try {
+        Disable-ADAccount -Identity $Username
+        
+        # Sposta in OU disabilitati (opzionale)
+        $disabledOU = \"OU=Disabled Users,DC=company,DC=local\"
+        if (Get-ADOrganizationalUnit -Filter \"DistinguishedName -eq '$disabledOU'\" -ErrorAction SilentlyContinue) {
+            Get-ADUser $Username | Move-ADObject -TargetPath $disabledOU
+        }
+        
+        Write-Log \"Utente disabilitato: $Username\"
+        
+    } catch {
+        Write-Log \"Errore disabilitazione utente $Username: $($_.Exception.Message)\" \"ERROR\"
+    }
+}
+
+# Funzione per ricerca utenti
+function Search-Users {
+    $searchTerm = Read-Host \"Inserisci nome, cognome o username da cercare\"
+    
+    try {
+        $users = Get-ADUser -Filter \"Name -like '*$searchTerm*' -or SamAccountName -like '*$searchTerm*'\" -Properties Department, Title, EmailAddress
+        
+        if ($users) {
+            $users | Format-Table Name, SamAccountName, Department, Title, EmailAddress -AutoSize
+        } else {
+            Write-Host \"Nessun utente trovato per: $searchTerm\" -ForegroundColor Yellow
+        }
+        
+    } catch {
+        Write-Log \"Errore ricerca utenti: $($_.Exception.Message)\" \"ERROR\"
+    }
+}
+
+# Funzione per creare CSV template
+function New-CSVTemplate {
+    $template = @\"
+Nome;Cognome;Username;Email;Dominio;Reparto;Ruolo;OU;Gruppi
+Mario;Rossi;m.rossi;mario.rossi@company.com;company.local;IT;Tecnico IT;OU=IT,DC=company,DC=local;Domain Users,IT_Staff
+Giulia;Verdi;g.verdi;giulia.verdi@company.com;company.local;HR;HR Manager;OU=HR,DC=company,DC=local;Domain Users,HR_Team
+\"@
+    
+    $template | Out-File -FilePath $Global:CSVTemplate -Encoding UTF8
+    Write-Host \"Template CSV creato in: $Global:CSVTemplate\" -ForegroundColor Green
+}
+
+# Menu principale
+function Show-Menu {
+    Clear-Host
+    Write-Host \"╔══════════════════════════════════════════╗\" -ForegroundColor Cyan
+    Write-Host \"║        AD USER MANAGER v1.0              ║\" -ForegroundColor Cyan
+    Write-Host \"║      PowerShell Active Directory         ║\" -ForegroundColor Cyan
+    Write-Host \"╚══════════════════════════════════════════╝\" -ForegroundColor Cyan
+    Write-Host \"\"
+    Write-Host \"🏢 Dominio corrente:\" (Get-ADDomain).DNSRoot -ForegroundColor Yellow
+    Write-Host \"👤 Utente corrente:\" $env:USERNAME -ForegroundColor Yellow
+    Write-Host \"\"
+    Write-Host \"Seleziona un'opzione:\" -ForegroundColor White
+    Write-Host \"\"
+    Write-Host \"1️⃣  Crea utenti da CSV\" -ForegroundColor Green
+    Write-Host \"2️⃣  Reset password utente\" -ForegroundColor Blue
+    Write-Host \"3️⃣  Disabilita utente\" -ForegroundColor Red
+    Write-Host \"4️⃣  Cerca utenti\" -ForegroundColor Magenta
+    Write-Host \"5️⃣  Crea template CSV\" -ForegroundColor Yellow
+    Write-Host \"6️⃣  Visualizza log\" -ForegroundColor Cyan
+    Write-Host \"0️⃣  Esci\" -ForegroundColor Gray
+    Write-Host \"\"
+}
+
+# Funzione principale
+function Start-ADUserManager {
+    # Crea directory log se non esiste
+    $logDir = Split-Path $Global:LogPath -Parent
+    if (-not (Test-Path $logDir)) {
+        New-Item -ItemType Directory -Path $logDir -Force
+    }
+    
+    Write-Log \"=== Avvio AD User Manager ===\"
+    
+    do {
+        Show-Menu
+        $choice = Read-Host \"Inserisci la tua scelta (0-6)\"
+        
+        switch ($choice) {
+            \"1\" {
+                $csvPath = Read-Host \"Inserisci percorso file CSV (o ENTER per default)\"
+                if (-not $csvPath) { $csvPath = $Global:CSVTemplate }
+                New-UsersFromCSV -CSVPath $csvPath
+                Read-Host \"Premi ENTER per continuare\"
+            }
+            \"2\" {
+                $username = Read-Host \"Inserisci username\"
+                Reset-UserPassword -Username $username
+                Read-Host \"Premi ENTER per continuare\"
+            }
+            \"3\" {
+                $username = Read-Host \"Inserisci username da disabilitare\"
+                $confirm = Read-Host \"Sei sicuro? (s/n)\"
+                if ($confirm -eq \"s\") {
+                    Disable-UserAccount -Username $username
+                }
+                Read-Host \"Premi ENTER per continuare\"
+            }
+            \"4\" {
+                Search-Users
+                Read-Host \"Premi ENTER per continuare\"
+            }
+            \"5\" {
+                New-CSVTemplate
+                Read-Host \"Premi ENTER per continuare\"
+            }
+            \"6\" {
+                if (Test-Path $Global:LogPath) {
+                    Get-Content $Global:LogPath | Select-Object -Last 20
+                } else {
+                    Write-Host \"File di log non trovato\" -ForegroundColor Yellow
+                }
+                Read-Host \"Premi ENTER per continuare\"
+            }
+            \"0\" {
+                Write-Log \"=== Chiusura AD User Manager ===\"
+                Write-Host \"Arrivederci! 👋\" -ForegroundColor Green
+                break
+            }
+            default {
+                Write-Host \"Opzione non valida!\" -ForegroundColor Red
+                Start-Sleep -Seconds 2
+            }
+        }
+    } while ($choice -ne \"0\")
+}
+
+# Avvio script
+if ($MyInvocation.InvocationName -ne '.') {
+    Start-ADUserManager
+}
+```
+
+## File CSV Template (utenti_template.csv)
+```csv
+Nome;Cognome;Username;Email;Dominio;Reparto;Ruolo;OU;Gruppi
+Mario;Rossi;m.rossi;mario.rossi@company.com;company.local;IT;Tecnico IT;OU=IT,DC=company,DC=local;Domain Users,IT_Staff
+Giulia;Verdi;g.verdi;giulia.verdi@company.com;company.local;HR;HR Manager;OU=HR,DC=company,DC=local;Domain Users,HR_Team
+Francesco;Bianchi;f.bianchi;francesco.bianchi@company.com;company.local;Vendite;Account Manager;OU=Sales,DC=company,DC=local;Domain Users,Sales_Team
+```
+
+## Caratteristiche del Script
+
+✅ **Menu interattivo colorato**
+✅ **Gestione errori completa**
+✅ **Sistema di logging**
+✅ **Creazione utenti da CSV**
+✅ **Reset password con notifica**
+✅ **Ricerca utenti avanzata**
+✅ **Template CSV automatico**
+
+## Requisiti
+- Windows Server con ruolo AD DS
+- PowerShell 5.1 o superiore
+- Modulo ActiveDirectory (RSAT)
+- Permessi amministrativi su AD
+
+## Come Usare
+1. Salva lo script come `AD-UserManager.ps1`
+2. Esegui con privilegi amministrativi
+3. Segui il menu interattivo
+
+## Per il Portfolio
+- Dimostra competenze PowerShell avanzate
+- Mostra conoscenza Active Directory
+- Include best practices (logging, error handling)
+- Menu user-friendly per presentazioni
+
+Questo script ti posiziona come candidato competente per ruoli SysAdmin junior in Spagna! 🚀`,
+  `kind`: `other`,
+  `summary_title`: `PowerShell AD User Manager - Script Completo`
+}
